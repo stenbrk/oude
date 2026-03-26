@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dodge & Survive</title>
+  <style>
+    body {
+      margin:0;
+      background:#0b1220;
+      color:white;
+      font-family:Arial;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      height:100vh;
+      flex-direction:column;
+    }
+
+    h2 {
+      margin-bottom:5px;
+    }
+
+    #ui {
+      text-align:center;
+      margin-bottom:10px;
+      color:white;
+      font-weight:bold;
+    }
+ 
+    canvas {
+      background:#020617;
+      border:2px solid white;
+      box-shadow:0 0 20px white;
+    }
+
+    #overlay {
+      position: fixed;
+      top:0;
+      left:0;
+      width:100%;
+      height:100%;
+      background: rgba(0,0,0,0.9);
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      flex-direction:column;
+    }
+
+    button {
+      padding:10px 20px;
+      font-size:16px;
+      cursor:pointer;
+      margin-top:10px;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Dodge & Survive</h2>
+
+<div id="ui">
+  <div id="scoreDisplay">Score: 0 | Highscore: 0</div>
+</div>
+
+<canvas id="game" width="400" height="400"></canvas>
+
+<div id="overlay">
+  <h1 id="titleText">Dodge & Survive</h1>
+  <button id="startBtn">Start Game</button>
+</div>
+
+<audio id="bgMusic" loop>
+  <source src="https://cdn.pixabay.com/download/audio/2022/10/25/audio_5b8b8c5c5e.mp3?filename=arcade-music-loop-112191.mp3" type="audio/mpeg">
+</audio>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let player, enemies = [], collectibles = [];
+let score = 0;
+let highscore = 0;
+let gameRunning = false;
+let coins = 0;
+
+
+let keys = {};
+let spawnTimer = 0;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playBeep(freq, duration, type="sine", volume=0.1) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.value = volume;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+document.getElementById("startBtn").onclick = () => startGame();
+
+function startGame() {
+  audioCtx.resume();
+
+  const music = document.getElementById("bgMusic");
+  music.pause();
+  music.currentTime = 0;
+
+  music.play().catch(err => {
+    console.log("Music blocked:", err);
+  });
+
+  playBeep(400, 0.1, "sine", 0.1);
+
+  player = {
+    x: 200,
+    y: 300,
+    r: 12, // ⬅ groter gemaakt
+    vx: 0,
+    vy: 0
+  };
+
+  enemies = [];
+  collectibles = [];
+  score = 0;
+  spawnTimer = 0;
+  gameRunning = true;
+
+  for (let i = 0; i < 4; i++) {
+    spawnCollectible();
+  }
+
+  document.getElementById("overlay").style.display = "none";
+}
+
+function gameOver() {
+  gameRunning = false;
+
+  if (score > highscore) highscore = score;
+
+  const music = document.getElementById("bgMusic");
+  music.pause();
+  music.currentTime = 0;
+
+  playBeep(120, 0.3, "square", 0.2);
+
+  document.getElementById("overlay").style.display = "flex";
+  document.getElementById("titleText").innerText = "Game Over";
+  document.getElementById("startBtn").innerText = "Opnieuw spelen";
+}
+
+function spawnCollectible() {
+  let y = 100 + Math.random() * 280;
+
+  collectibles.push({
+    x: Math.random() * 380,
+    y: y,
+    r: 6
+  });
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update() {
+  if (!gameRunning || !player) return;
+
+  let accel = 0.5;
+
+  if (keys["w"] || keys["arrowup"]) player.vy -= accel;
+  if (keys["s"] || keys["arrowdown"]) player.vy += accel;
+  if (keys["a"] || keys["arrowleft"]) player.vx -= accel;
+  if (keys["d"] || keys["arrowright"]) player.vx += accel;
+
+  player.vx *= 0.9;
+  player.vy *= 0.9;
+
+  player.x += player.vx;
+  player.y += player.vy;
+
+  player.x = Math.max(0, Math.min(400, player.x));
+  player.y = Math.max(0, Math.min(400, player.y));
+
+  spawnTimer += 16;
+
+  let spawnRate = 2000;
+  if (score > 5) spawnRate = 1200;
+  if (score > 10) spawnRate = 800;
+  if (score > 20) spawnRate = 300;
+
+  if (spawnTimer > spawnRate) {
+    spawnTimer = 0;
+
+    let spawnX = Math.random() * 400;
+    let spawnY = -20;
+
+    enemies.push({
+      x: spawnX,
+      y: spawnY,
+      r: 8,
+      speed: 2 + score * 0.07
+    });
+  }
+
+  enemies.forEach(e => {
+    e.y += e.speed;
+
+    let dx = player.x - e.x;
+    let dy = player.y - e.y;
+    let dist = Math.hypot(dx, dy);
+
+    if (dist < player.r + e.r) {
+      gameOver();
+    }
+  });
+
+  enemies = enemies.filter(e => e.y < 450);
+
+  collectibles = collectibles.filter(c => {
+    let dx = player.x - c.x;
+    let dy = player.y - c.y;
+    let dist = Math.hypot(dx, dy);
+
+    if (dist < player.r + c.r) {
+      score++;
+      spawnCollectible();
+      playBeep(600, 0.1, "triangle", 0.1);
+      return false;
+    }
+    return true;
+  });
+
+  while (collectibles.length < 4) spawnCollectible();
+
+  document.getElementById("scoreDisplay").innerText =
+    "Score: " + score + " | Highscore: " + highscore;
+}
+
+function draw() {
+  ctx.fillStyle = "#020617";
+  ctx.fillRect(0,0,400,400);
+
+  // PLAYER (UPDATED STYLE)
+  if (player) {
+    ctx.save();
+
+    ctx.shadowColor = "lime";
+    ctx.shadowBlur = 25;
+
+    ctx.fillStyle = "lime";
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  ctx.fillStyle = "red";
+  enemies.forEach(e=>{
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.fillStyle = "yellow";
+  collectibles.forEach(c=>{
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+loop();
+</script>
+
+</body>
+</html>
