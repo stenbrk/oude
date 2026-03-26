@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dodge & Survive</title>
+  <style>
+    body {
+      margin:0;
+      background:#0b1220;
+      color:white;
+      font-family:Arial;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      height:100vh;
+      flex-direction:column;
+    }
+
+    h2 {
+      margin-bottom:5px;
+    }
+
+    #ui {
+      text-align:center;
+      margin-bottom:10px;
+      color:white;
+      font-weight:bold;
+    }
+    
+    #leaderboard {
+  margin: 20px 0;
+  font-size: 18px;
+  line-height: 1.6;
+}
+ 
+    canvas {
+      background:#020617;
+      border:2px solid white;
+      box-shadow:0 0 20px white;
+    }
+
+    #overlay {
+  position: fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background: rgba(0,0,0,0.9);
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  flex-direction:column;
+  text-align:center;
+}
+
+    #menuButtons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+    #settingsOverlay {
+      position: fixed;
+      top:0;
+      left:0;
+      width:100%;
+      height:100%;
+      background: rgba(0,0,0,0.9);
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      flex-direction:column;
+      color:white;
+}
+
+    #startBtn {
+      font-size: 24px;
+      padding: 15px 30px;
+      color: black;
+      background: white;
+}
+
+#settingsBtn,
+#shopBtn {
+  font-size: 14px;
+  width: 100px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: black;
+  background: white;
+}
+  </style>
+</head>
+<body>
+
+<h2>Dodge & Survive</h2>
+
+<div id="ui">
+  <div id="scoreDisplay">Score: 0 | Highscore: 0 | 🪙: 0</div>
+</div>
+
+<canvas id="game" width="400" height="400"></canvas>
+
+<div id="overlay">
+  <h1 id="titleText">Dodge & Survive</h1>
+
+  <div id="leaderboard"></div>
+
+  <!-- Voeg dit toe -->
+  <input type="text" id="usernameInput" placeholder="Username" maxlength="10" style="padding:5px; font-size:16px; text-align:center; margin-bottom:10px;">
+
+  <div id="menuButtons">
+    <button id="settingsBtn">Settings</button>
+    <button id="startBtn">Start Game</button>
+    <button id="shopBtn">Shop</button>
+  </div>
+</div>
+
+<audio id="bgMusic" loop>
+  <source src="https://cdn.pixabay.com/download/audio/2022/10/25/audio_5b8b8c5c5e.mp3?filename=arcade-music-loop-112191.mp3" type="audio/mpeg">
+</audio>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+    
+    const firebaseConfig = {
+  apiKey: "AIzaSyAHiUO-q3hPauVRC27Vx4MCuutpNYhvA0Y",
+  authDomain: "dodgesurvive.firebaseapp.com",
+  projectId: "dodgesurvive",
+  storageBucket: "dodgesurvive.appspot.com",
+  messagingSenderId: "836760101272",
+  appId: "1:836760101272:web:22c04f4db7efc202384bed"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+function listenLeaderboard() {
+  db.collection("leaderboard")
+    .orderBy("score", "desc")
+    .limit(10)
+    .onSnapshot(snapshot => {
+      leaderboard = [];
+
+      snapshot.forEach(doc => {
+        leaderboard.push(doc.data());
+      });
+
+      updateLeaderboardUI();
+    });
+}
+
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let player, enemies = [], collectibles = [];
+let score = 0;
+let highscore = 0;
+let gameRunning = false;
+let coins = 0;
+
+let keys = {};
+let spawnTimer = 0;
+
+let magnetActive = false;
+let magnetTimer = 0;
+
+let shieldActive = false;
+let shieldTimer = 0;
+
+let coinBombActive = false;
+let coinsInGame = 4;
+let lastPowerupScore = 0;
+let powerupSpawnedFor20 = 0;
+let coinMultiplierActive = false;
+let coinMultiplierTimer = 0;
+let leaderboard = [];
+let playerName = "";
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playBeep(freq, duration, type="sine", volume=0.1) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.value = volume;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+document.getElementById("startBtn").onclick = () => startGame();
+
+function startGame() {
+    playerName = document.getElementById("usernameInput").value || "Player";
+    
+  audioCtx.resume();
+
+  const music = document.getElementById("bgMusic");
+  music.pause();
+  music.currentTime = 0;
+
+  music.play().catch(err => {
+    console.log("Music blocked:", err);
+  });
+
+  playBeep(400, 0.1, "sine", 0.1);
+
+  player = {
+    x: 200,
+    y: 300,
+    r: 12, // ⬅ groter gemaakt
+    vx: 0,
+    vy: 0
+  };
+
+  enemies = [];
+  collectibles = [];
+  score = 0;
+  spawnTimer = 0;
+  gameRunning = true;
+  powerupSpawnedFor20 = 0;
+
+  for (let i = 0; i < coinsInGame; i++) {
+  spawnCollectible();
+}
+
+document.getElementById("usernameInput").style.display = "none";
+
+  document.getElementById("overlay").style.display = "none";
+}
+
+function gameOver() {
+  gameRunning = false;
+  
+  let usernameInput = document.getElementById("usernameInput");
+playerName = usernameInput.value.trim() || "Jij";
+
+leaderboard.push({ name: playerName, score: score });
+leaderboard.sort((a, b) => b.score - a.score);
+
+updateLeaderboardUI();
+
+db.collection("leaderboard").add({
+  name: playerName,
+  score: score,
+  createdAt: firebase.firestore.FieldValue.serverTimestamp()
+});
+
+  // RESET ALLE POWERUPS
+  magnetActive = false;
+  magnetTimer = 0;
+
+  shieldActive = false;
+  shieldTimer = 0;
+
+  coinMultiplierActive = false;
+  coinMultiplierTimer = 0;
+
+  coinBombActive = false;
+  coinsInGame = 4;
+
+  if (score > highscore) highscore = score;
+
+  const music = document.getElementById("bgMusic");
+  music.pause();
+  music.currentTime = 0;
+
+  playBeep(120, 0.3, "square", 0.2);
+
+  document.getElementById("overlay").style.display = "flex";
+  document.getElementById("titleText").innerText = "Game Over";
+  document.getElementById("startBtn").innerText = "Play again";
+  
+  coins += score;
+}
+const POWERUPS = ["magnet", "shield", "coinbomb"];
+
+function updateLeaderboardUI() {
+  let lb = document.getElementById("leaderboard");
+
+  // FILTER: per speler alleen hoogste score
+  let filtered = {};
+  leaderboard.forEach(entry => {
+    if (!filtered[entry.name] || entry.score > filtered[entry.name].score) {
+      filtered[entry.name] = entry;
+    }
+  });
+
+  let uniqueLeaderboard = Object.values(filtered);
+
+  // SORT op score
+  uniqueLeaderboard.sort((a, b) => b.score - a.score);
+
+  // TOP 10
+  let top10 = uniqueLeaderboard.slice(0, 10);
+
+  let html = "<h3>Leaderboard</h3>";
+
+  top10.forEach((entry, i) => {
+    let badge = "";
+    if (i === 0) badge = "🥇 ";
+    if (i === 1) badge = "🥈 ";
+    if (i === 2) badge = "🥉 ";
+
+    html += `<div>${badge}${i + 1}. ${entry.name} (${entry.score} punten)</div>`;
+  });
+
+  // JOUW score
+  let yourEntry = uniqueLeaderboard.find(e => e.name === playerName);
+  if (yourEntry) {
+    let yourIndex = uniqueLeaderboard.indexOf(yourEntry);
+    html += `<br><div><b>👤 ${playerName}: ${yourEntry.score} (${yourIndex + 1}e plaats)</b></div>`;
+  }
+
+  lb.innerHTML = html;
+}
+
+function spawnCollectible() {
+    
+  let y = 100 + Math.random() * 280;
+
+  collectibles.push({
+    x: Math.random() * 380,
+    y: y,
+    r: 6
+  });
+}
+
+function spawnPowerup() {
+  let y = 100 + Math.random() * 280;
+  let type = POWERUPS[Math.floor(Math.random() * POWERUPS.length)];
+
+  collectibles.push({
+    x: Math.random() * 380,
+    y: y,
+    r: 14,
+    type: type
+  });
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function update() {
+  if (!gameRunning || !player) return;
+  
+  if (magnetActive) {
+  magnetTimer -= 16;
+
+  collectibles.forEach(c => {
+    if (c.type === "coin") {
+      let dx = player.x - c.x;
+      let dy = player.y - c.y;
+      let dist = Math.hypot(dx, dy);
+
+      if (dist < 120) {
+        c.x += dx * 0.05;
+        c.y += dy * 0.05;
+      }
+    }
+  });
+
+  if (magnetTimer <= 0) magnetActive = false;
+}
+
+if (shieldActive) {
+  shieldTimer -= 16;
+  if (shieldTimer <= 0) shieldActive = false;
+}
+
+    if (coinMultiplierActive) {
+  coinMultiplierTimer -= 16;
+  if (coinMultiplierTimer <= 0) coinMultiplierActive = false;
+}
+
+  let accel = 0.5;
+
+  if (keys["w"] || keys["arrowup"]) player.vy -= accel;
+  if (keys["s"] || keys["arrowdown"]) player.vy += accel;
+  if (keys["a"] || keys["arrowleft"]) player.vx -= accel;
+  if (keys["d"] || keys["arrowright"]) player.vx += accel;
+
+  player.vx *= 0.9;
+  player.vy *= 0.9;
+
+  player.x += player.vx;
+  player.y += player.vy;
+
+  player.x = Math.max(0, Math.min(400, player.x));
+  player.y = Math.max(0, Math.min(400, player.y));
+
+  spawnTimer += 16;
+
+  let spawnRate = 2000;
+  if (score > 5) spawnRate = 1200;
+  if (score > 10) spawnRate = 800;
+  if (score > 20) spawnRate = 300;
+
+  if (spawnTimer > spawnRate) {
+  spawnTimer = 0;
+
+  let spawnX = Math.random() * 400;
+  let spawnY = -20;
+
+  enemies.push({
+    x: spawnX,
+    y: spawnY,
+    r: 8,
+    speed: 2 + score * 0.07
+  });
+}
+
+  enemies.forEach(e => {
+    e.y += e.speed;
+
+    let dx = player.x - e.x;
+    let dy = player.y - e.y;
+    let dist = Math.hypot(dx, dy);
+
+    if (dist < player.r + e.r) {
+  if (!shieldActive) {
+    gameOver();
+  }
+}
+  });
+
+  enemies = enemies.filter(e => e.y < 450);
+
+  collectibles = collectibles.filter(c => {
+    let dx = player.x - c.x;
+    let dy = player.y - c.y;
+    let dist = Math.hypot(dx, dy);
+
+    if (dist < player.r + c.r) {
+
+  // COIN
+  if (c.type === "coin" || !c.type) {
+  if (coinMultiplierActive) {
+    score += 2;
+  } else {
+    score += 1;
+  }
+    playBeep(600, 0.1, "triangle", 0.1);
+
+    if (coinBombActive) {
+      coinsInGame--;
+
+      if (coinsInGame <= 4) {
+        coinBombActive = false;
+        coinsInGame = 4;
+      }
+    }
+  }
+
+  // MAGNET
+  if (c.type === "magnet") {
+  coinMultiplierActive = true;
+  coinMultiplierTimer = 10000;
+  playBeep(300, 0.2, "sine", 0.2);
+}
+
+  // SHIELD
+  if (c.type === "shield") {
+    shieldActive = true;
+    shieldTimer = 10000;
+    playBeep(800, 0.2, "square", 0.2);
+  }
+
+  // COINBOMB
+  if (c.type === "coinbomb") {
+    coinBombActive = true;
+    coinsInGame = 14;
+    playBeep(200, 0.3, "square", 0.3);
+  }
+
+  spawnCollectible();
+  return false;
+}
+    return true;
+  });
+  
+  if (score >= 20 && Math.floor(score / 20) > powerupSpawnedFor20) {
+  spawnPowerup();
+  powerupSpawnedFor20 = Math.floor(score / 20);
+}
+
+  while (collectibles.length < coinsInGame) spawnCollectible();
+
+  document.getElementById("scoreDisplay").innerText =
+  "Score: " + score + " | Highscore: " + highscore + " | 🪙: " + coins;
+}
+
+function draw() {
+  ctx.fillStyle = "#020617";
+  ctx.fillRect(0,0,400,400);
+
+  // PLAYER (UPDATED STYLE)
+  if (player) {
+  ctx.save();
+
+  ctx.shadowColor = "lime";
+  ctx.shadowBlur = 25;
+
+  ctx.fillStyle = "lime";
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // 🔽 TIMER IN DE SPeler
+  if (shieldActive) {
+    ctx.fillStyle = "black";
+    ctx.font = "bold 17px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.fillText(
+      Math.ceil(shieldTimer / 1000),
+      player.x,
+      player.y
+    );
+ }
+    
+    if (coinMultiplierActive) {
+  ctx.fillStyle = "black";
+  ctx.font = "bold 17px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillText(
+    Math.ceil(coinMultiplierTimer / 1000),
+    player.x,
+    player.y
+  );
+  }
+}
+  
+  if (shieldActive) {
+  ctx.beginPath();
+  ctx.strokeStyle = "cyan";
+  ctx.lineWidth = 3;
+  ctx.arc(player.x, player.y, player.r + 8, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+  ctx.fillStyle = "red";
+  enemies.forEach(e=>{
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  collectibles.forEach(c=>{
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+
+  // MAGNET (coin multiplier)
+  if (c.type === "magnet") {
+    ctx.fillStyle = "blue"; // blauw
+    ctx.fill();
+
+    ctx.fillStyle = "white";
+    ctx.font = "18px Serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("X2", c.x, c.y);
+  }
+
+  // COINBOMB
+  else if (c.type === "coinbomb") {
+    ctx.fillStyle = "orange";
+    ctx.fill();
+
+    ctx.fillStyle = "black";
+    ctx.font = "18px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("💣", c.x, c.y);
+  }
+
+  // SHIELD
+  else if (c.type === "shield") {
+    ctx.fillStyle = "blue";
+    ctx.fill();
+
+    ctx.fillStyle = "white";
+    ctx.font = "18px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("🛡", c.x, c.y);
+  }
+
+  // NORMAL COIN
+  else {
+    ctx.fillStyle = "yellow";
+    ctx.fill();
+  }
+});
+}
+
+loop();
+listenLeaderboard();
+</script>
+
+</body>
+</html>
